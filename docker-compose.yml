@@ -1,0 +1,116 @@
+version: "3.8"
+
+services:
+  airflow:
+    image: apache/airflow:2.5.1
+    restart: always
+    environment:
+      - LOAD_EX=n
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ./airflow/logs:/opt/airflow/logs
+      - ./airflow/plugins:/opt/airflow/plugins
+    command: webserver
+    depends_on:
+      - postgres
+    networks:
+      - smaxtec-net
+
+  postgres:
+    image: postgres:13
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    ports:
+      - "5432:5432"
+    networks:
+      - smaxtec-net
+
+  kafka:
+    image: wurstmeister/kafka:latest
+    restart: always
+    depends_on:
+      - zookeeper
+    environment:
+      KAFKA_LISTENERS: INSIDE://0.0.0.0:9092
+      KAFKA_ADVERTISED_LISTENERS: INSIDE://kafka:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INSIDE:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INSIDE
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+    ports:
+      - "9092:9092"
+    networks:
+      - smaxtec-net
+
+  kafka-consumer:
+    build:
+      context: ./kafka
+    depends_on:
+      - kafka
+    networks:
+      - smaxtec-net
+
+  kafka-exporter:
+    image: danielqsj/kafka-exporter:latest
+    restart: always
+    ports:
+      - "9308:9308"
+    environment:
+      KAFKA_URI: "kafka:9092"
+    depends_on:
+      - kafka
+    networks:
+      - smaxtec-net
+
+  zookeeper:
+    image: wurstmeister/zookeeper:latest
+    restart: always
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+    ports:
+      - "2181:2181"
+    networks:
+      - smaxtec-net
+
+  fake-api:
+    build:
+      context: ./fake-api
+    ports:
+      - "5000:5000"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:5000/cow-data"]
+      interval: 30s
+      retries: 3
+      start_period: 10s
+      timeout: 10s
+    networks:
+      - smaxtec-net
+
+  prometheus:
+    image: prom/prometheus
+    restart: always
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+    networks:
+      - smaxtec-net   # 👈 add this line
+
+  grafana:
+    image: grafana/grafana
+    restart: always
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning
+    networks:
+      - smaxtec-net   # 👈 add this line
+
+networks:
+  smaxtec-net:
+    driver: bridge
