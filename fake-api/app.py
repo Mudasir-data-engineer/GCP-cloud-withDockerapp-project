@@ -23,6 +23,10 @@ def create_producer():
 
 producer = create_producer()
 
+@app.route('/health', methods=['GET'])
+def health_check():
+    return jsonify({"status": "ok"})
+
 @app.route('/cow-data', methods=['GET'])
 def send_cow_data():
     fake_data = {
@@ -36,7 +40,6 @@ def send_cow_data():
         producer.flush()
     except Exception as e:
         print(f"Kafka send failed: {e}")
-
 
     print(f"Produced cow data: {fake_data}")
     return jsonify({"message": "Cow data sent to Kafka", "data": fake_data})

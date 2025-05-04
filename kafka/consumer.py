@@ -2,7 +2,7 @@ from kafka import KafkaConsumer
 import json
 import time
 
-TOPIC_NAME = 'sensor-data'
+TOPIC_NAME = 'cow-health-data'
 KAFKA_BROKER = 'kafka:9092'
 
 # Wait until Kafka is available
@@ -14,7 +14,7 @@ def wait_for_kafka():
                 bootstrap_servers=KAFKA_BROKER,
                 auto_offset_reset='earliest',
                 enable_auto_commit=True,
-                group_id='cow-consumer-group',  # ✅ important addition
+                group_id='smaxtec-consumer',  # ✅ important addition
                 value_deserializer=lambda x: json.loads(x.decode('utf-8'))
             )
             print("Connected to Kafka.")

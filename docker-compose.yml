@@ -1,20 +1,115 @@
-version: "3.8"
+version: '3.8'
 
 services:
-  airflow:
-    image: apache/airflow:2.5.1
+
+  airflow-webserver:
+    build:
+      context: .
+      dockerfile: airflow/Dockerfile
+    image: custom-airflow:2.5.1
     restart: always
+    user: "50000:0"
+    env_file:
+      - .env
     environment:
-      - LOAD_EX=n
+      - AIRFLOW__CORE__FERNET_KEY=MZSQ_k_yMW8wKwdFGElC6qzXKmlcF6hFgL-gNGMdd_8=
     ports:
       - "8080:8080"
     volumes:
       - ./airflow/dags:/opt/airflow/dags
       - ./airflow/logs:/opt/airflow/logs
       - ./airflow/plugins:/opt/airflow/plugins
-    command: webserver
+      - ./kafka:/opt/airflow/kafka
+      - ./consumer:/opt/airflow/consumer
     depends_on:
       - postgres
+      - redis
+      - airflow-init
+    command: webserver
+    networks:
+      - smaxtec-net
+
+  airflow-scheduler:
+    build:
+      context: .
+      dockerfile: airflow/Dockerfile
+    image: custom-airflow:2.5.1
+    restart: always
+    user: "50000:0"
+    env_file:
+      - .env
+    environment:
+      - AIRFLOW__CORE__FERNET_KEY=MZSQ_k_yMW8wKwdFGElC6qzXKmlcF6hFgL-gNGMdd_8=
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ./airflow/logs:/opt/airflow/logs
+      - ./airflow/plugins:/opt/airflow/plugins
+      - ./kafka:/opt/airflow/kafka
+      - ./consumer:/opt/airflow/consumer
+    depends_on:
+      - postgres
+      - redis
+    command: scheduler
+    networks:
+      - smaxtec-net
+
+  airflow-worker:
+    build:
+      context: .
+      dockerfile: airflow/Dockerfile
+    image: custom-airflow:2.5.1
+    restart: always
+    user: "50000:0"
+    env_file:
+      - .env
+    environment:
+      - AIRFLOW__CORE__FERNET_KEY=MZSQ_k_yMW8wKwdFGElC6qzXKmlcF6hFgL-gNGMdd_8=
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ./airflow/logs:/opt/airflow/logs
+      - ./airflow/plugins:/opt/airflow/plugins
+      - ./kafka:/opt/airflow/kafka
+      - ./consumer:/opt/airflow/consumer
+    depends_on:
+      - postgres
+      - redis
+    command: celery worker
+    networks:
+      - smaxtec-net
+
+  airflow-init:
+    build:
+      context: .
+      dockerfile: airflow/Dockerfile
+    image: custom-airflow:2.5.1
+    restart: "no"
+    user: "50000:0"
+    entrypoint: >
+      bash -c "
+        airflow db upgrade &&
+        airflow users create --username admin --password admin --firstname Admin --lastname User --role Admin --email admin@example.com
+      "
+    env_file:
+      - .env
+    environment:
+      - AIRFLOW__CORE__FERNET_KEY=MZSQ_k_yMW8wKwdFGElC6qzXKmlcF6hFgL-gNGMdd_8=
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ./airflow/logs:/opt/airflow/logs
+      - ./airflow/plugins:/opt/airflow/plugins
+      - ./kafka:/opt/airflow/kafka
+      - ./consumer:/opt/airflow/consumer
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - smaxtec-net
+
+  redis:
+    image: redis:6.0
+    restart: always
+    ports:
+      - "6379:6379"
     networks:
       - smaxtec-net
 
@@ -34,14 +129,12 @@ services:
     restart: always
     depends_on:
       - zookeeper
-    environment:
-      KAFKA_LISTENERS: INSIDE://0.0.0.0:9092
-      KAFKA_ADVERTISED_LISTENERS: INSIDE://kafka:9092
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INSIDE:PLAINTEXT
-      KAFKA_INTER_BROKER_LISTENER_NAME: INSIDE
-      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
     ports:
       - "9092:9092"
+    environment:
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
     networks:
       - smaxtec-net
 
@@ -59,7 +152,7 @@ services:
     ports:
       - "9308:9308"
     environment:
-      KAFKA_URI: "kafka:9092"
+      KAFKA_URI: kafka:9092
     depends_on:
       - kafka
     networks:
@@ -81,7 +174,7 @@ services:
     ports:
       - "5000:5000"
     healthcheck:
-      test: ["CMD", "curl", "--fail", "http://localhost:5000/cow-data"]
+      test: ["CMD", "curl", "--fail", "http://localhost:5000/health"]
       interval: 30s
       retries: 3
       start_period: 10s
@@ -97,7 +190,7 @@ services:
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
     networks:
-      - smaxtec-net   # 👈 add this line
+      - smaxtec-net
 
   grafana:
     image: grafana/grafana
@@ -109,7 +202,7 @@ services:
     volumes:
       - ./grafana/provisioning:/etc/grafana/provisioning
     networks:
-      - smaxtec-net   # 👈 add this line
+      - smaxtec-net
 
 networks:
   smaxtec-net:
