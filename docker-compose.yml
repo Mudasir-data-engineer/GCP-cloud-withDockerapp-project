@@ -5,7 +5,7 @@ services:
   airflow-webserver:
     build:
       context: .
-      dockerfile: airflow/Dockerfile
+      dockerfile: Dockerfile
     image: custom-airflow:2.5.1
     restart: always
     user: "50000:0"
@@ -32,7 +32,7 @@ services:
   airflow-scheduler:
     build:
       context: .
-      dockerfile: airflow/Dockerfile
+      dockerfile: Dockerfile
     image: custom-airflow:2.5.1
     restart: always
     user: "50000:0"
@@ -56,7 +56,7 @@ services:
   airflow-worker:
     build:
       context: .
-      dockerfile: airflow/Dockerfile
+      dockerfile: Dockerfile
     image: custom-airflow:2.5.1
     restart: always
     user: "50000:0"
@@ -80,7 +80,7 @@ services:
   airflow-init:
     build:
       context: .
-      dockerfile: airflow/Dockerfile
+      dockerfile: Dockerfile
     image: custom-airflow:2.5.1
     restart: "no"
     user: "50000:0"
@@ -140,11 +140,14 @@ services:
 
   kafka-consumer:
     build:
-      context: ./kafka
+      context: ./consumer
+      dockerfile: Dockerfile
     depends_on:
       - kafka
     networks:
       - smaxtec-net
+    mem_limit: 1g        # Limit memory usage to 1 GB (you can adjust this based on your system's resources)
+    mem_reservation: 512m # Reserve 512 MB for the container
 
   kafka-exporter:
     image: danielqsj/kafka-exporter:latest

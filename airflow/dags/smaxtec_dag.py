@@ -5,12 +5,15 @@ from datetime import datetime
 import subprocess
 import requests
 
-# Custom functions
+
 def call_fake_api():
     url = "http://fake-api:5000/cow-data"
     response = requests.get(url)
     if response.status_code != 200:
         raise Exception(f"API call failed with status {response.status_code}")
+    print(f"API call successful: {response.status_code}", flush=True)
+    print(f"Data: {response.text}", flush=True)
+
 
 def run_producer():
     try:
@@ -19,38 +22,64 @@ def run_producer():
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
-            timeout=20  # kill after 20 seconds (adjust as needed)
+            timeout=20
         )
-        print("STDOUT:", result.stdout)
-        print("STDERR:", result.stderr)
-        result.check_returncode()  # raises error if exit code != 0
+        print("Producer STDOUT:", result.stdout, flush=True)
+        print("Producer STDERR:", result.stderr, flush=True)
+        result.check_returncode()
     except subprocess.CalledProcessError as e:
-        print("Producer script failed with return code:", e.returncode)
-        print("Output:\n", e.output)
-        print("Error Output:\n", e.stderr)
+        print("Producer script failed:", e.returncode, flush=True)
+        print("Error Output:\n", e.stderr, flush=True)
         raise
     except subprocess.TimeoutExpired:
-        print("Producer script timed out.")
+        print("Producer script timed out.", flush=True)
         raise
 
 
 def run_consumer():
-    subprocess.run(["python", "/opt/airflow/kafka/consumer.py"], check=True)
+    try:
+        result = subprocess.run(
+            ["python", "/opt/airflow/kafka/consumer.py"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True
+        )
+        print("Consumer STDOUT:", result.stdout, flush=True)
+        print("Consumer STDERR:", result.stderr, flush=True)
+        result.check_returncode()
+    except subprocess.CalledProcessError as e:
+        print("Consumer script failed:", e.returncode, flush=True)
+        print("Error Output:\n", e.stderr, flush=True)
+        raise
+
 
 def run_pipeline_processor():
-    subprocess.run(["python", "/opt/airflow/consumer/consumer.py"], check=True)
+    try:
+        result = subprocess.run(
+            ["python", "/opt/airflow/consumer/consumer.py"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True
+        )
+        print("Pipeline Processor STDOUT:", result.stdout, flush=True)
+        print("Pipeline Processor STDERR:", result.stderr, flush=True)
+        result.check_returncode()
+    except subprocess.CalledProcessError as e:
+        print("Pipeline processor failed:", e.returncode, flush=True)
+        print("Error Output:\n", e.stderr, flush=True)
+        raise
 
-# DAG definition
+
 with DAG(
     dag_id='smaxtec_dag',
     start_date=datetime(2025, 5, 1),
-    schedule_interval='*/30 * * * *',  # Every 30 minutes
+    schedule_interval='*/30 * * * *',
     catchup=False
 ) as dag:
 
     api_health_check = HttpSensor(
         task_id='api_health_check',
-        http_conn_id='api_connection',  # Define this in Airflow UI
+        http_conn_id='api_connection',
         endpoint='cow-data',
         poke_interval=10,
         timeout=60
@@ -76,5 +105,4 @@ with DAG(
         python_callable=run_pipeline_processor
     )
 
-    # Task pipeline
     api_health_check >> call_fake_api_task >> produce_task >> consume_task >> pipeline_processor_task
