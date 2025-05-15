@@ -1,9 +1,3 @@
-﻿# Permanent ignores
+airflow/dags/gcs_keyfile.json
 airflow/logs/
-airflow/*.pid
-*.log
-.DS_Store
-.env
-.venv/
-__pycache__/
-
+airflow/airflow-webserver.pid

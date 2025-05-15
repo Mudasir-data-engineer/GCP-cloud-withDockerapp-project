@@ -1,47 +1,115 @@
+# consumer/consumer.py
+
 from kafka import KafkaConsumer
 import json
-import time
 import sys
+import time
+from datetime import datetime
+from google.cloud import storage
+import io
+
+TOTAL_MESSAGES = 3000
+BATCH_SIZE = 300
+POLL_TIMEOUT_MS = 10_000  # 10 seconds
 
 def safe_deserializer(m):
     try:
-        if m:  # Check if the message is not empty
-            return json.loads(m.decode('utf-8'))  # Try to decode the message to JSON
-    except json.JSONDecodeError as e:
-        print(f"[Deserialization Error] Failed to decode message: {e}", flush=True)
+        if m:
+            return json.loads(m.decode('utf-8'))
     except Exception as e:
-        print(f"[Unexpected Error] An unexpected error occurred while deserializing message: {e}", flush=True)
+        print(f"[Deserialization Error] {e}", flush=True)
     return None
 
+def process_data(data):
+    if not data or 'cow_id' not in data or 'sensor_id_transformed' not in data:
+        print(f"[Invalid Data] {data}", flush=True)
+        return None
+
+    # Optional: temperature conversion safeguard
+    if data.get('temperature_unit') == 'F':
+        data['temperature'] = (data['temperature'] - 32) * 5.0 / 9.0
+        data['temperature_unit'] = 'C'
+    return data
+
+def generate_date_time_folder():
+    current_time = datetime.utcnow()
+    date_str = current_time.strftime("%Y-%m-%d")
+    time_str = current_time.strftime("%H-%M")
+    return f"{date_str}_{time_str}"
+
+def generate_batch_name(batch_number):
+    return f"batch_{batch_number}"
+
+def upload_to_gcs_memory(batch, date_time_str, batch_number):
+    try:
+        buffer = io.StringIO()
+        for record in batch:
+            buffer.write(json.dumps(record) + "\n")
+        buffer.seek(0)
+
+        bucket = storage.Client.from_service_account_json(
+            "/opt/airflow/dags/gcs_keyfile.json"
+        ).bucket("smaxtec-project-bucket")
+
+        blob_path = f"cow_data/{date_time_str}/{generate_batch_name(batch_number)}.ndjson"
+        blob = bucket.blob(blob_path)
+        blob.upload_from_file(buffer, content_type='application/x-ndjson')
+        print(f"[GCS Upload] gs://smaxtec-project-bucket/{blob_path}", flush=True)
+    except Exception as e:
+        print(f"[GCS Upload Error] {e}", flush=True)
+
+# --- Main ---
+
 try:
-    # Initialize Kafka Consumer
     consumer = KafkaConsumer(
-        'cow-health-data',
+        'sensor-data',
         bootstrap_servers='kafka:9092',
-        value_deserializer=safe_deserializer,  # Use the safe deserializer function
+        value_deserializer=safe_deserializer,
         auto_offset_reset='earliest',
         enable_auto_commit=True,
-        group_id='new-sensor-consumer-group',
+        group_id='sensor-consumer-gcs-group',
         heartbeat_interval_ms=3000,
         session_timeout_ms=30000,
         max_poll_interval_ms=300000
     )
+    print("[Startup] Kafka Consumer ready.", flush=True)
 except Exception as e:
-    print(f"[Startup Error] Failed to start KafkaConsumer: {e}", flush=True)
+    print(f"[Startup Error] {e}", flush=True)
     sys.exit(1)
 
-print("[Startup] Kafka Consumer started and listening to 'cow-health-data' topic...", flush=True)
+collected = []
+count = 0
+batch_number = 1
 
 try:
-    for message in consumer:
-        if message.value is not None:
-            print(f"[Message Received] {json.dumps(message.value, indent=2)}", flush=True)
-        else:
-            print(f"[Empty Message] Received an empty message.", flush=True)
+    while count < TOTAL_MESSAGES:
+        print("[Polling] Waiting for messages...", flush=True)
+        msg_pack = consumer.poll(timeout_ms=POLL_TIMEOUT_MS)
+        if not msg_pack:
+            print("[Timeout] No messages in last 10s.", flush=True)
+            break
+
+        for tp, msgs in msg_pack.items():
+            for m in msgs:
+                rec = process_data(m.value)
+                if rec:
+                    collected.append(rec)
+                    count += 1
+                if len(collected) >= BATCH_SIZE:
+                    date_time_str = generate_date_time_folder()
+                    upload_to_gcs_memory(collected, date_time_str, batch_number)
+                    collected = []
+                    batch_number += 1
+                if count >= TOTAL_MESSAGES:
+                    break
+
 except KeyboardInterrupt:
-    print("[Shutdown] Consumer shutdown requested.", flush=True)
+    print("[Shutdown] Interrupted by user.", flush=True)
 except Exception as e:
-    print(f"[Runtime Error] An error occurred while processing messages: {e}", flush=True)
+    print(f"[Runtime Error] {e}", flush=True)
 finally:
+    if collected:
+        date_time_str = generate_date_time_folder()
+        upload_to_gcs_memory(collected, date_time_str, batch_number)
     consumer.close()
-    print("[Shutdown] Kafka Consumer closed.", flush=True)
+    print(f"[Shutdown] Consumer closed. Total processed: {count}", flush=True)

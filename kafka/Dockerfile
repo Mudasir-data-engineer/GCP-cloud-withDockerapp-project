@@ -1,14 +1,11 @@
-# Use a minimal Python base image
 FROM python:3.11-slim
 
-# Set working directory
+RUN pip install kafka-python
+
 WORKDIR /app
 
-# Copy only what's needed
-COPY consumer.py .
+COPY . .
 
-# Install only what's necessary
-RUN pip install --no-cache-dir kafka-python
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Run the consumer
-CMD ["python", "consumer.py"]
+CMD ["python", "main.py"]

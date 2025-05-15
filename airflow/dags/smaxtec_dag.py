@@ -1,88 +1,84 @@
+# dags/smaxtec_dag.py
+
 from airflow import DAG
 from airflow.operators.python import PythonOperator
-from airflow.providers.http.sensors.http import HttpSensor
-from datetime import datetime
+from datetime import datetime, timedelta
 import subprocess
 import requests
-
+import logging
 
 def call_fake_api():
     url = "http://fake-api:5000/cow-data"
-    response = requests.get(url)
-    if response.status_code != 200:
-        raise Exception(f"API call failed with status {response.status_code}")
-    print(f"API call successful: {response.status_code}", flush=True)
-    print(f"Data: {response.text}", flush=True)
+    try:
+        response = requests.get(url)
+        response.raise_for_status()
+        logging.info(f"API call successful: {response.status_code}")
+        logging.info(f"Data: {response.json()}")
+    except Exception as e:
+        logging.error(f"API call failed: {e}")
+        raise
 
-
-def run_producer():
+def run_subprocess(command, label):
     try:
         result = subprocess.run(
-            ["python", "/opt/airflow/kafka/producer.py"],
+            command,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
-            timeout=20
+            timeout=300
         )
-        print("Producer STDOUT:", result.stdout, flush=True)
-        print("Producer STDERR:", result.stderr, flush=True)
+        logging.info(f"{label} STDOUT: {result.stdout}")
+        if result.stderr:
+            logging.error(f"{label} STDERR: {result.stderr}")
         result.check_returncode()
     except subprocess.CalledProcessError as e:
-        print("Producer script failed:", e.returncode, flush=True)
-        print("Error Output:\n", e.stderr, flush=True)
+        logging.error(f"{label} failed with return code {e.returncode}")
         raise
     except subprocess.TimeoutExpired:
-        print("Producer script timed out.", flush=True)
+        logging.error(f"{label} timed out.")
         raise
 
-
-def run_consumer():
-    try:
-        result = subprocess.run(
-            ["python", "/opt/airflow/kafka/consumer.py"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True
-        )
-        print("Consumer STDOUT:", result.stdout, flush=True)
-        print("Consumer STDERR:", result.stderr, flush=True)
-        result.check_returncode()
-    except subprocess.CalledProcessError as e:
-        print("Consumer script failed:", e.returncode, flush=True)
-        print("Error Output:\n", e.stderr, flush=True)
-        raise
-
+def run_producer():
+    logging.info("Running Kafka producer task.")
+    run_subprocess(["python", "/opt/airflow/kafka/producer.py"], "Producer")
 
 def run_pipeline_processor():
-    try:
-        result = subprocess.run(
-            ["python", "/opt/airflow/consumer/consumer.py"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True
-        )
-        print("Pipeline Processor STDOUT:", result.stdout, flush=True)
-        print("Pipeline Processor STDERR:", result.stderr, flush=True)
-        result.check_returncode()
-    except subprocess.CalledProcessError as e:
-        print("Pipeline processor failed:", e.returncode, flush=True)
-        print("Error Output:\n", e.stderr, flush=True)
-        raise
+    logging.info("Running pipeline processor task.")
+    run_subprocess(["python", "/opt/airflow/consumer/consumer.py"], "Pipeline Processor")
 
+def check_api_health():
+    import time
+    max_retries = 6
+    for attempt in range(max_retries):
+        try:
+            response = requests.get("http://fake-api:5000/health", timeout=5)
+            if response.status_code == 200:
+                logging.info("API is healthy.")
+                return
+            else:
+                logging.warning(f"Health check failed: {response.status_code}")
+        except Exception as e:
+            logging.warning(f"Health check exception: {e}")
+        time.sleep(10)
+    raise Exception("API health check failed after multiple retries.")
+
+default_args = {
+    'owner': 'airflow',
+    'retries': 2,
+    'retry_delay': timedelta(minutes=2)
+}
 
 with DAG(
     dag_id='smaxtec_dag',
+    default_args=default_args,
     start_date=datetime(2025, 5, 1),
-    schedule_interval='*/30 * * * *',
+    schedule_interval='0 */3 * * *',  # Every 3 hours
     catchup=False
 ) as dag:
 
-    api_health_check = HttpSensor(
+    api_health_check = PythonOperator(
         task_id='api_health_check',
-        http_conn_id='api_connection',
-        endpoint='cow-data',
-        poke_interval=10,
-        timeout=60
+        python_callable=check_api_health
     )
 
     call_fake_api_task = PythonOperator(
@@ -95,14 +91,10 @@ with DAG(
         python_callable=run_producer
     )
 
-    consume_task = PythonOperator(
-        task_id='run_consumer',
-        python_callable=run_consumer
-    )
-
     pipeline_processor_task = PythonOperator(
         task_id='pipeline_processor',
         python_callable=run_pipeline_processor
     )
 
-    api_health_check >> call_fake_api_task >> produce_task >> consume_task >> pipeline_processor_task
+    # Define task dependencies
+    api_health_check >> call_fake_api_task >> produce_task >> pipeline_processor_task
