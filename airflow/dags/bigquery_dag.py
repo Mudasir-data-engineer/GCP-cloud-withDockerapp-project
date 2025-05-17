@@ -5,18 +5,33 @@ from airflow.providers.google.cloud.transfers.gcs_to_bigquery import GCSToBigQue
 from airflow.providers.google.cloud.hooks.gcs import GCSHook
 import os
 
-# DAG Configuration
-BUCKET_NAME = 'smaxtec-project-bucket'
-DATA_PREFIX = 'cow_data/'
+# === Configuration ===
+BUCKET_NAME      = 'smaxtec-project-bucket'
+DATA_PREFIX      = 'cow_data/'
 PROCESSED_PREFIX = 'cow_data/processed_folders/'
-PROJECT_ID = 'smaxtec-project-gcp'
-DATASET = 'smaxtec_dataset'
-TABLE = 'smaxtec_data'
+PROJECT_ID       = 'smaxtec-project-gcp'
+DATASET          = 'smaxtec_dataset'
+TABLE            = 'smaxtec_data_part'          # new partitioned+clustered table
+GCP_CONN_ID      = 'google_cloud_default'
+KEY_FILE         = os.path.join(os.path.dirname(__file__), 'gcs_keyfile.json')
 
-# Service account key path
-key_path = os.path.join(os.path.dirname(__file__), 'gcs_keyfile.json')
+# === Explicit BigQuery schema (matches smaxtec_data_part) ===
+BQ_SCHEMA = [
+    {"name": "event_ts",             "type": "TIMESTAMP", "mode": "NULLABLE"},
+    {"name": "temperature",          "type": "FLOAT",     "mode": "NULLABLE"},
+    {"name": "humidity",             "type": "FLOAT",     "mode": "NULLABLE"},
+    {"name": "activity_level",       "type": "FLOAT",     "mode": "NULLABLE"},
+    {"name": "heart_rate",           "type": "INTEGER",   "mode": "NULLABLE"},
+    {"name": "rumination_minutes",   "type": "INTEGER",   "mode": "NULLABLE"},
+    {"name": "location_x",           "type": "FLOAT",     "mode": "NULLABLE"},
+    {"name": "location_y",           "type": "FLOAT",     "mode": "NULLABLE"},
+    {"name": "milk_yield",           "type": "FLOAT",     "mode": "NULLABLE"},
+    {"name": "is_ruminating",        "type": "BOOLEAN",   "mode": "NULLABLE"},
+    {"name": "sensor_id_transformed","type": "INTEGER",   "mode": "NULLABLE"},
+    {"name": "cow_id",               "type": "INTEGER",   "mode": "NULLABLE"},
+]
 
-# Default DAG arguments
+# === Default DAG args ===
 default_args = {
     'owner': 'airflow',
     'depends_on_past': False,
@@ -24,72 +39,45 @@ default_args = {
     'retry_delay': timedelta(minutes=5),
 }
 
-def list_unprocessed_folders(**context):
-    hook = GCSHook(gcp_conn_id='google_cloud_default', key_file=key_path)
+# === Helper: list unprocessed folders ===
+def list_unprocessed_folders():
+    hook = GCSHook(gcp_conn_id=GCP_CONN_ID, key_file=KEY_FILE)
     blobs = hook.list(bucket_name=BUCKET_NAME, prefix=DATA_PREFIX)
-
     folders = set()
     for blob in blobs:
         parts = blob.split('/')
         if len(parts) > 2 and parts[1] and not blob.startswith(PROCESSED_PREFIX):
-            folder = f"{parts[0]}/{parts[1]}/"
-            folders.add(folder)
+            folders.add(f"{parts[0]}/{parts[1]}/")
+    return sorted(folders)
 
-    sorted_folders = sorted(folders)
-    print(f"Unprocessed folders: {sorted_folders}")
-    return sorted_folders
-
-def move_to_processed_and_cleanup(folder_name, **kwargs):
-    hook = GCSHook(gcp_conn_id='google_cloud_default', key_file=key_path)
-
-    src_prefix = f"{DATA_PREFIX}{folder_name}/"
+# === Helper: move loaded files to processed/ ===
+def move_to_processed_and_cleanup(folder_name, **_):
+    hook = GCSHook(gcp_conn_id=GCP_CONN_ID, key_file=KEY_FILE)
+    src_prefix  = f"{DATA_PREFIX}{folder_name}/"
     dest_prefix = f"{PROCESSED_PREFIX}{folder_name}/"
-
-    print(f"Moving from {src_prefix} to {dest_prefix}")
-
-    # List all objects under the folder
-    blobs = hook.list(bucket_name=BUCKET_NAME, prefix=src_prefix)
-
-    for blob in blobs:
-        filename = blob.split('/')[-1]
-        src_path = blob
-        dest_path = f"{dest_prefix}{filename}"
-
-        # Copy to processed location
+    for blob in hook.list(bucket_name=BUCKET_NAME, prefix=src_prefix):
+        filename  = blob.split('/')[-1]
         hook.copy(
-            source_bucket=BUCKET_NAME,
-            source_object=src_path,
-            destination_bucket=BUCKET_NAME,
-            destination_object=dest_path
+            source_bucket=BUCKET_NAME, source_object=blob,
+            destination_bucket=BUCKET_NAME, destination_object=f"{dest_prefix}{filename}"
         )
-        # Delete original file
-        hook.delete(bucket_name=BUCKET_NAME, object_name=src_path)
+        hook.delete(bucket_name=BUCKET_NAME, object_name=blob)
+    print(f"✅ Moved and cleaned up folder: {folder_name}")
 
-    print(f"Moved and cleaned up folder: {folder_name}")
-
-# Define the DAG
+# === DAG Definition ===
 with DAG(
     dag_id='gcs_to_bigquery_ingestion',
     default_args=default_args,
-    schedule_interval='0 0,12 * * *',  # Runs at 00:00 and 12:00
+    schedule_interval='0 0,12 * * *',   # every 12 hours
     start_date=datetime(2024, 1, 1),
     catchup=False,
     tags=['gcs', 'bigquery'],
 ) as dag:
 
-    list_folders_task = PythonOperator(
-        task_id='list_unprocessed_folders',
-        python_callable=list_unprocessed_folders,
-    )
-
-    def create_dynamic_tasks(**kwargs):
-        ti = kwargs['ti']
-        folders = ti.xcom_pull(task_ids='list_unprocessed_folders')
-
-        if not folders:
-            print("No unprocessed folders found.")
-            return
-
+    folders = list_unprocessed_folders()
+    if not folders:
+        print("No unprocessed folders found.")
+    else:
         for folder in folders:
             folder_name = folder.rstrip('/').split('/')[-1]
             safe_id = folder_name.replace("-", "_").replace(":", "_")
@@ -102,11 +90,13 @@ with DAG(
                 destination_project_dataset_table=f"{PROJECT_ID}.{DATASET}.{TABLE}",
                 source_format='NEWLINE_DELIMITED_JSON',
                 write_disposition='WRITE_APPEND',
-                autodetect=True,
-                gcp_conn_id='google_cloud_default',
+                autodetect=False,
+                schema_fields=BQ_SCHEMA,
+                ignore_unknown_values=True,   # skip extra fields
+                max_bad_records=5,            # skip up to 5 malformed rows per file
+                gcp_conn_id=GCP_CONN_ID,
                 retries=3,
             )
-            load_task.dag = dag
 
             move_task = PythonOperator(
                 task_id=f'move_{safe_id}_to_processed',
@@ -114,14 +104,5 @@ with DAG(
                 op_kwargs={'folder_name': folder_name},
                 retries=3,
             )
-            move_task.dag = dag
 
             load_task >> move_task
-
-    generate_tasks = PythonOperator(
-        task_id='generate_tasks',
-        python_callable=create_dynamic_tasks,
-        provide_context=True,
-    )
-
-    list_folders_task >> generate_tasks
