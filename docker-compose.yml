@@ -1,0 +1,224 @@
+
+services:
+
+  airflow-webserver:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: custom-airflow:2.7.3
+    restart: always
+    user: "50000:1001"
+    env_file:
+      - .env
+    environment:
+      - AIRFLOW__CORE__FERNET_KEY=MZSQ_k_yMW8wKwdFGElC6qzXKmlcF6hFgL-gNGMdd_8=
+      - GOOGLE_APPLICATION_CREDENTIALS=/opt/airflow/dags/gcs_keyfile.json
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./airflow:/opt/airflow
+      - ./airflow/dags:/opt/airflow/dags
+      - ./airflow/logs:/opt/airflow/logs
+      - ./airflow/plugins:/opt/airflow/plugins
+      - ./kafka:/opt/airflow/kafka
+      - ./consumer:/opt/airflow/consumer
+      - ./airflow/dags/gcs_keyfile.json:/opt/airflow/dags/gcs_keyfile.json
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      - postgres
+      - redis
+      - airflow-init
+    command: webserver
+    networks:
+      - smaxtec-net
+
+  airflow-scheduler:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: custom-airflow:2.7.3
+    restart: always
+    user: "50000:1001"
+    env_file:
+      - .env
+    environment:
+      - AIRFLOW__CORE__FERNET_KEY=MZSQ_k_yMW8wKwdFGElC6qzXKmlcF6hFgL-gNGMdd_8=
+      - GOOGLE_APPLICATION_CREDENTIALS=/opt/airflow/dags/gcs_keyfile.json
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ./airflow/logs:/opt/airflow/logs
+      - ./airflow/plugins:/opt/airflow/plugins
+      - ./kafka:/opt/airflow/kafka
+      - ./consumer:/opt/airflow/consumer
+      - ./airflow/dags/gcs_keyfile.json:/opt/airflow/dags/gcs_keyfile.json
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      - postgres
+      - redis
+    command: scheduler
+    networks:
+      - smaxtec-net
+
+  airflow-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: custom-airflow:2.7.3
+    restart: always
+    user: "50000:1001"
+    env_file:
+      - .env
+    environment:
+      - AIRFLOW__CORE__FERNET_KEY=MZSQ_k_yMW8wKwdFGElC6qzXKmlcF6hFgL-gNGMdd_8=
+      - GOOGLE_APPLICATION_CREDENTIALS=/opt/airflow/dags/gcs_keyfile.json
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ./airflow/logs:/opt/airflow/logs
+      - ./airflow/plugins:/opt/airflow/plugins
+      - ./kafka:/opt/airflow/kafka
+      - ./consumer:/opt/airflow/consumer
+      - ./airflow/dags/gcs_keyfile.json:/opt/airflow/dags/gcs_keyfile.json
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      - postgres
+      - redis
+    command: celery worker
+    networks:
+      - smaxtec-net
+
+  airflow-init:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: custom-airflow:2.7.3
+    restart: "no"
+    user: "50000:1001"
+    entrypoint: >
+      bash -c "
+        airflow db upgrade &&
+        airflow users create --username admin --password admin --firstname Admin --lastname User --role Admin --email admin@example.com
+      "
+    env_file:
+      - .env
+    environment:
+      - AIRFLOW__CORE__FERNET_KEY=MZSQ_k_yMW8wKwdFGElC6qzXKmlcF6hFgL-gNGMdd_8=
+      - GOOGLE_APPLICATION_CREDENTIALS=/opt/airflow/dags/gcs_keyfile.json
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ./airflow/logs:/opt/airflow/logs
+      - ./airflow/plugins:/opt/airflow/plugins
+      - ./kafka:/opt/airflow/kafka
+      - ./consumer:/opt/airflow/consumer
+      - ./airflow/dags/gcs_keyfile.json:/opt/airflow/dags/gcs_keyfile.json
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - smaxtec-net
+
+  redis:
+    image: redis:6.0
+    restart: always
+    ports:
+      - "6379:6379"
+    networks:
+      - smaxtec-net
+
+  postgres:
+    image: postgres:13
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    ports:
+      - "5432:5432"
+    networks:
+      - smaxtec-net
+
+  kafka:
+    image: wurstmeister/kafka:latest
+    restart: always
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+    networks:
+      - smaxtec-net
+
+  kafka-consumer:
+    build:
+      context: ./consumer
+      dockerfile: Dockerfile
+    depends_on:
+      - kafka
+    networks:
+      - smaxtec-net
+    mem_limit: 1g
+    mem_reservation: 512m
+
+  kafka-exporter:
+    image: danielqsj/kafka-exporter:latest
+    restart: always
+    ports:
+      - "9308:9308"
+    environment:
+      KAFKA_URI: kafka:9092
+    depends_on:
+      - kafka
+    networks:
+      - smaxtec-net
+
+  zookeeper:
+    image: wurstmeister/zookeeper:latest
+    restart: always
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+    ports:
+      - "2181:2181"
+    networks:
+      - smaxtec-net
+
+  fake-api:
+    build:
+      context: ./fake-api
+    ports:
+      - "5000:5000"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:5000/health"]
+      interval: 30s
+      retries: 3
+      start_period: 10s
+      timeout: 10s
+    networks:
+      - smaxtec-net
+
+  prometheus:
+    image: prom/prometheus
+    restart: always
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+    networks:
+      - smaxtec-net
+
+  grafana:
+    image: grafana/grafana
+    restart: always
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning
+    networks:
+      - smaxtec-net
+
+networks:
+  smaxtec-net:
+    driver: bridge
