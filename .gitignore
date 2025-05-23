@@ -1,3 +1,4 @@
 airflow/dags/gcs_keyfile.json
 airflow/logs/
 airflow/airflow-webserver.pid
+DockerDesktopWSL/disk/docker_data.vhdx
