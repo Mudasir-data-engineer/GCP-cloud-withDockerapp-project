@@ -8,8 +8,8 @@ from datetime import datetime
 from google.cloud import storage
 import io
 
-TOTAL_MESSAGES = 3000
-BATCH_SIZE = 300
+TOTAL_MESSAGES = 30000
+BATCH_SIZE = 3000
 POLL_TIMEOUT_MS = 10_000  # 10 seconds
 
 def safe_deserializer(m):

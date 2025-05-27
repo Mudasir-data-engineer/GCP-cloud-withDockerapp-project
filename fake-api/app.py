@@ -64,7 +64,7 @@ def health_check():
 
 @app.route('/cow-data', methods=['GET'])
 def send_cow_data():
-    for _ in range(3000):
+    for _ in range(30000):
         cow_id = random.randint(1, 1000)
         s = get_state(cow_id)
 
@@ -106,8 +106,8 @@ def send_cow_data():
         except Exception as e:
             print(f"Kafka send failed: {e}")
 
-    print(f"Produced 3000 cow data entries.")
-    return jsonify({"message": "3000 cow data sent to Kafka"})
+    print(f"Produced 30000 cow data entries.")
+    return jsonify({"message": "30000 cow data sent to Kafka"})
 
 # ------------------ Main ------------------
 

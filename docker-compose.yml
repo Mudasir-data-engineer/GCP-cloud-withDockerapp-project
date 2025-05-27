@@ -19,6 +19,7 @@ services:
       - ./airflow:/opt/airflow
       - ./airflow/dags:/opt/airflow/dags
       - ./airflow/logs:/opt/airflow/logs
+      - ./dags/sql:/opt/airflow/dags/sql
       - ./airflow/plugins:/opt/airflow/plugins
       - ./kafka:/opt/airflow/kafka
       - ./consumer:/opt/airflow/consumer
@@ -47,6 +48,7 @@ services:
     volumes:
       - ./airflow/dags:/opt/airflow/dags
       - ./airflow/logs:/opt/airflow/logs
+      - ./dags/sql:/opt/airflow/dags/sql
       - ./airflow/plugins:/opt/airflow/plugins
       - ./kafka:/opt/airflow/kafka
       - ./consumer:/opt/airflow/consumer
@@ -74,6 +76,7 @@ services:
     volumes:
       - ./airflow/dags:/opt/airflow/dags
       - ./airflow/logs:/opt/airflow/logs
+      - ./dags/sql:/opt/airflow/dags/sql
       - ./airflow/plugins:/opt/airflow/plugins
       - ./kafka:/opt/airflow/kafka
       - ./consumer:/opt/airflow/consumer
@@ -106,6 +109,7 @@ services:
     volumes:
       - ./airflow/dags:/opt/airflow/dags
       - ./airflow/logs:/opt/airflow/logs
+      - ./dags/sql:/opt/airflow/dags/sql
       - ./airflow/plugins:/opt/airflow/plugins
       - ./kafka:/opt/airflow/kafka
       - ./consumer:/opt/airflow/consumer

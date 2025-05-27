@@ -1,4 +1,7 @@
 kafka-python
 pandas
-joblib
+
 scikit-learn
+joblib
+google-cloud-bigquery
+pyarrow>=10.0.1,<10.1.0

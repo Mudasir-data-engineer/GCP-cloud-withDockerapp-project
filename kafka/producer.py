@@ -35,7 +35,7 @@ def generate_fake_cow_data():
 
 
 try:
-    for i in range(3000):  # Send exactly 3000 records
+    for i in range(30000):  # Send exactly 30000 records
         message = generate_fake_cow_data()
         producer.send('sensor-data', value=message)
         if (i + 1) % 100 == 0:
@@ -43,7 +43,7 @@ try:
         time.sleep(0.001)  # slight delay to avoid overwhelming Kafka
 
     producer.flush()
-    logging.info("All 3000 messages sent and producer flushed.")
+    logging.info("All 5000 messages sent and producer flushed.")
 finally:
     producer.close()
     logging.info("Producer connection closed.")
