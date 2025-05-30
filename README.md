@@ -14,6 +14,7 @@ Managing hundreds or thousands of cows requires automation. This project combine
 
 Built using Kafka, Airflow, BigQuery, Docker, and Prometheus, this pipeline runs fully automated daily ML tasks with scalability and reliability in mind.
 
+![alt tag](GCP-Project.png)
 ---
 
 ## 📊 Machine Learning Pipelines
